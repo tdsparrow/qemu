@@ -193,6 +193,7 @@ int mem_prealloc = 0; /* force preallocation of physical target memory */
 int nb_nics;
 NICInfo nd_table[MAX_NICS];
 int autostart;
+unsigned long long hbreak = -1;
 static int rtc_utc = 1;
 static int rtc_date_offset = -1; /* -1 means no change */
 QEMUClockType rtc_clock;
@@ -3263,9 +3264,24 @@ int main(int argc, char **argv, char **envp)
             case QEMU_OPTION_S:
                 autostart = 0;
                 break;
-	    case QEMU_OPTION_k:
-		keyboard_layout = optarg;
-		break;
+            case QEMU_OPTION_breakpoint:
+                hbreak = strtoull(optarg, NULL, 0);
+                /* hbreak needs a gdb server */
+                struct device_config *gdbdev = NULL;
+                QTAILQ_FOREACH(gdbdev, &device_configs, next) {
+                  if (gdbdev->type == DEV_GDB) {
+                    break;
+                  }
+                }
+                
+                if (!gdbdev) {
+                  add_device_config(DEV_GDB, "tcp::" DEFAULT_GDBSTUB_PORT);
+                }
+
+                break;
+            case QEMU_OPTION_k:
+                keyboard_layout = optarg;
+                break;
             case QEMU_OPTION_localtime:
                 rtc_utc = 0;
                 break;

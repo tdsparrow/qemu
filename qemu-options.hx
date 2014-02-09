@@ -2641,6 +2641,15 @@ Shorthand for -gdb tcp::1234, i.e. open a gdbserver on TCP port 1234
 (@pxref{gdb_usage}).
 ETEXI
 
+DEF("hb", HAS_ARG, QEMU_OPTION_breakpoint, \
+    "-hb addr        set an hardware breakpoint at address addr\n",
+    QEMU_ARCH_ALL)
+STEXI
+address@hidden -hb @var{addr}
+address@hidden -hb
+Set an hardware breakpoint at address @var{addr}, by default implies "-s".
+ETEXI
+
 DEF("d", HAS_ARG, QEMU_OPTION_d, \
     "-d item1,...    enable logging of specified items (use '-d help' for a list of log items)\n",
     QEMU_ARCH_ALL)

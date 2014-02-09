@@ -1578,6 +1578,7 @@ static int gdbserver_open(int port)
         close(fd);
         return -1;
     }
+
     return fd;
 }
 
@@ -1669,6 +1670,8 @@ static void gdb_sigterm_handler(int signal)
 }
 #endif
 
+extern unsigned long long hbreak;
+
 int gdbserver_start(const char *device)
 {
     GDBState *s;
@@ -1726,6 +1729,11 @@ int gdbserver_start(const char *device)
     s->state = chr ? RS_IDLE : RS_INACTIVE;
     s->mon_chr = mon_chr;
     s->current_syscall_cb = NULL;
+
+
+    if (hbreak != (unsigned long long) -1 ) {
+      gdb_breakpoint_insert(hbreak, 1, GDB_BREAKPOINT_HW);
+    }
 
     return 0;
 }
