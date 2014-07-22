@@ -47,10 +47,6 @@ static void q35_host_realize(DeviceState *dev, Error **errp)
     sysbus_add_io(sbd, MCH_HOST_BRIDGE_CONFIG_DATA, &pci->data_mem);
     sysbus_init_ioports(sbd, MCH_HOST_BRIDGE_CONFIG_DATA, 4);
 
-    if (pcie_host_init(PCIE_HOST_BRIDGE(s)) < 0) {
-        error_setg(errp, "failed to initialize pcie host");
-        return;
-    }
     pci->bus = pci_bus_new(DEVICE(s), "pcie.0",
                            s->mch.pci_address_space, s->mch.address_space_io,
                            0, TYPE_PCIE_BUS);
@@ -272,7 +268,7 @@ static void mch_update_smram(MCHPCIState *mch)
     PCIDevice *pd = PCI_DEVICE(mch);
 
     memory_region_transaction_begin();
-    smram_update(&mch->smram_region, pd->config[MCH_HOST_BRDIGE_SMRAM],
+    smram_update(&mch->smram_region, pd->config[MCH_HOST_BRIDGE_SMRAM],
                     mch->smm_enabled);
     memory_region_transaction_commit();
 }
@@ -283,7 +279,7 @@ static void mch_set_smm(int smm, void *arg)
     PCIDevice *pd = PCI_DEVICE(mch);
 
     memory_region_transaction_begin();
-    smram_set_smm(&mch->smm_enabled, smm, pd->config[MCH_HOST_BRDIGE_SMRAM],
+    smram_set_smm(&mch->smm_enabled, smm, pd->config[MCH_HOST_BRIDGE_SMRAM],
                     &mch->smram_region);
     memory_region_transaction_commit();
 }
@@ -306,8 +302,8 @@ static void mch_write_config(PCIDevice *d,
         mch_update_pciexbar(mch);
     }
 
-    if (ranges_overlap(address, len, MCH_HOST_BRDIGE_SMRAM,
-                       MCH_HOST_BRDIGE_SMRAM_SIZE)) {
+    if (ranges_overlap(address, len, MCH_HOST_BRIDGE_SMRAM,
+                       MCH_HOST_BRIDGE_SMRAM_SIZE)) {
         mch_update_smram(mch);
     }
 }
@@ -330,9 +326,8 @@ static const VMStateDescription vmstate_mch = {
     .name = "mch",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = mch_post_load,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, MCHPCIState),
         VMSTATE_UINT8(smm_enabled, MCHPCIState),
         VMSTATE_END_OF_LIST()
@@ -347,7 +342,7 @@ static void mch_reset(DeviceState *qdev)
     pci_set_quad(d->config + MCH_HOST_BRIDGE_PCIEXBAR,
                  MCH_HOST_BRIDGE_PCIEXBAR_DEFAULT);
 
-    d->config[MCH_HOST_BRDIGE_SMRAM] = MCH_HOST_BRIDGE_SMRAM_DEFAULT;
+    d->config[MCH_HOST_BRIDGE_SMRAM] = MCH_HOST_BRIDGE_SMRAM_DEFAULT;
 
     mch_update(mch);
 }

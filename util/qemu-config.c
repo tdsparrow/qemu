@@ -20,7 +20,7 @@ static QemuOptsList *find_list(QemuOptsList **lists, const char *group,
             break;
     }
     if (lists[i] == NULL) {
-        error_set(errp, QERR_INVALID_OPTION_GROUP, group);
+        error_setg(errp, "There is no option group '%s'", group);
     }
     return lists[i];
 }
@@ -31,12 +31,26 @@ QemuOptsList *qemu_find_opts(const char *group)
     Error *local_err = NULL;
 
     ret = find_list(vm_config_groups, group, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         error_report("%s", error_get_pretty(local_err));
         error_free(local_err);
     }
 
     return ret;
+}
+
+QemuOpts *qemu_find_opts_singleton(const char *group)
+{
+    QemuOptsList *list;
+    QemuOpts *opts;
+
+    list = qemu_find_opts(group);
+    assert(list);
+    opts = qemu_opts_find(list, NULL);
+    if (!opts) {
+        opts = qemu_opts_create(list, NULL, 0, &error_abort);
+    }
+    return opts;
 }
 
 static CommandLineParameterInfoList *query_option_descs(const QemuOptDesc *desc)
@@ -67,6 +81,10 @@ static CommandLineParameterInfoList *query_option_descs(const QemuOptDesc *desc)
         if (desc[i].help) {
             info->has_help = true;
             info->help = g_strdup(desc[i].help);
+        }
+        if (desc[i].def_value_str) {
+            info->has_q_default = true;
+            info->q_default = g_strdup(desc[i].def_value_str);
         }
 
         entry = g_malloc0(sizeof(*entry));
@@ -295,7 +313,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
         if (sscanf(line, "[%63s \"%63[^\"]\"]", group, id) == 2) {
             /* group with id */
             list = find_list(lists, group, &local_err);
-            if (error_is_set(&local_err)) {
+            if (local_err) {
                 error_report("%s", error_get_pretty(local_err));
                 error_free(local_err);
                 goto out;
@@ -306,7 +324,7 @@ int qemu_config_parse(FILE *fp, QemuOptsList **lists, const char *fname)
         if (sscanf(line, "[%63[^]]]", group) == 1) {
             /* group without id */
             list = find_list(lists, group, &local_err);
-            if (error_is_set(&local_err)) {
+            if (local_err) {
                 error_report("%s", error_get_pretty(local_err));
                 error_free(local_err);
                 goto out;
@@ -376,13 +394,13 @@ static void config_parse_qdict_section(QDict *options, QemuOptsList *opts,
     }
 
     subopts = qemu_opts_create(opts, NULL, 0, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         error_propagate(errp, local_err);
         goto out;
     }
 
     qemu_opts_absorb_qdict(subopts, subqdict, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         error_propagate(errp, local_err);
         goto out;
     }
@@ -413,16 +431,22 @@ static void config_parse_qdict_section(QDict *options, QemuOptsList *opts,
             QDict *section = qobject_to_qdict(qlist_entry_obj(list_entry));
             char *opt_name;
 
+            if (!section) {
+                error_setg(errp, "[%s] section (index %u) does not consist of "
+                           "keys", opts->name, i);
+                goto out;
+            }
+
             opt_name = g_strdup_printf("%s.%u", opts->name, i++);
             subopts = qemu_opts_create(opts, opt_name, 1, &local_err);
             g_free(opt_name);
-            if (error_is_set(&local_err)) {
+            if (local_err) {
                 error_propagate(errp, local_err);
                 goto out;
             }
 
             qemu_opts_absorb_qdict(subopts, section, &local_err);
-            if (error_is_set(&local_err)) {
+            if (local_err) {
                 error_propagate(errp, local_err);
                 qemu_opts_del(subopts);
                 goto out;
@@ -450,7 +474,7 @@ void qemu_config_parse_qdict(QDict *options, QemuOptsList **lists,
 
     for (i = 0; lists[i]; i++) {
         config_parse_qdict_section(options, lists[i], &local_err);
-        if (error_is_set(&local_err)) {
+        if (local_err) {
             error_propagate(errp, local_err);
             return;
         }

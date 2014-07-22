@@ -80,39 +80,13 @@ DefinitionBlock (
             Name(_HID, EisaId("PNP0A03"))
             Name(_ADR, 0x00)
             Name(_UID, 1)
+//#define PX13 S0B_
+//            External(PX13, DeviceObj)
         }
     }
 
 #include "acpi-dsdt-pci-crs.dsl"
 #include "acpi-dsdt-hpet.dsl"
-
-
-/****************************************************************
- * VGA
- ****************************************************************/
-
-    Scope(\_SB.PCI0) {
-        Device(VGA) {
-            Name(_ADR, 0x00020000)
-            OperationRegion(PCIC, PCI_Config, Zero, 0x4)
-            Field(PCIC, DWordAcc, NoLock, Preserve) {
-                VEND, 32
-            }
-            Method(_S1D, 0, NotSerialized) {
-                Return (0x00)
-            }
-            Method(_S2D, 0, NotSerialized) {
-                Return (0x00)
-            }
-            Method(_S3D, 0, NotSerialized) {
-                If (LEqual(VEND, 0x1001b36)) {
-                    Return (0x03)           // QXL
-                } Else {
-                    Return (0x00)
-                }
-            }
-        }
-    }
 
 
 /****************************************************************
@@ -132,6 +106,9 @@ DefinitionBlock (
  ****************************************************************/
 
     Scope(\_SB.PCI0) {
+
+        External(ISA, DeviceObj)
+
         Device(ISA) {
             Name(_ADR, 0x00010000)
 
@@ -329,7 +306,7 @@ DefinitionBlock (
         }
     }
 
-#include "hw/acpi/cpu_hotplug_defs.h"
+#include "hw/acpi/pc-hotplug.h"
 #define CPU_STATUS_BASE PIIX4_CPU_HOTPLUG_IO_BASE
 #include "acpi-dsdt-cpu-hotplug.dsl"
 
@@ -337,6 +314,7 @@ DefinitionBlock (
 /****************************************************************
  * General purpose events
  ****************************************************************/
+    External(\_SB.PCI0.MEMORY_HOPTLUG_DEVICE.MEMORY_SLOT_SCAN_METHOD, MethodObj)
 
     Scope(\_GPE) {
         Name(_HID, "ACPI0006")
@@ -353,7 +331,9 @@ DefinitionBlock (
             // CPU hotplug event
             \_SB.PRSC()
         }
-        Method(_L03) {
+        Method(_E03) {
+            // Memory hotplug event
+            \_SB.PCI0.MEMORY_HOPTLUG_DEVICE.MEMORY_SLOT_SCAN_METHOD()
         }
         Method(_L04) {
         }

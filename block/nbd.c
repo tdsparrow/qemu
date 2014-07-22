@@ -175,7 +175,7 @@ static void nbd_parse_filename(const char *filename, QDict *options,
         InetSocketAddress *addr = NULL;
 
         addr = inet_parse(host_spec, errp);
-        if (error_is_set(errp)) {
+        if (!addr) {
             goto out;
         }
 
@@ -188,31 +188,28 @@ out:
     g_free(file);
 }
 
-static int nbd_config(BDRVNBDState *s, QDict *options, char **export)
+static void nbd_config(BDRVNBDState *s, QDict *options, char **export,
+                       Error **errp)
 {
     Error *local_err = NULL;
 
-    if (qdict_haskey(options, "path")) {
-        if (qdict_haskey(options, "host")) {
-            qerror_report(ERROR_CLASS_GENERIC_ERROR, "path and host may not "
-                          "be used at the same time.");
-            return -EINVAL;
+    if (qdict_haskey(options, "path") == qdict_haskey(options, "host")) {
+        if (qdict_haskey(options, "path")) {
+            error_setg(errp, "path and host may not be used at the same time.");
+        } else {
+            error_setg(errp, "one of path and host must be specified.");
         }
-        s->client.is_unix = true;
-    } else if (qdict_haskey(options, "host")) {
-        s->client.is_unix = false;
-    } else {
-        return -EINVAL;
+        return;
     }
 
+    s->client.is_unix = qdict_haskey(options, "path");
     s->socket_opts = qemu_opts_create(&socket_optslist, NULL, 0,
                                       &error_abort);
 
     qemu_opts_absorb_qdict(s->socket_opts, options, &local_err);
-    if (error_is_set(&local_err)) {
-        qerror_report_err(local_err);
-        error_free(local_err);
-        return -EINVAL;
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return;
     }
 
     if (!qemu_opt_get(s->socket_opts, "port")) {
@@ -223,19 +220,17 @@ static int nbd_config(BDRVNBDState *s, QDict *options, char **export)
     if (*export) {
         qdict_del(options, "export");
     }
-
-    return 0;
 }
 
-static int nbd_establish_connection(BlockDriverState *bs)
+static int nbd_establish_connection(BlockDriverState *bs, Error **errp)
 {
     BDRVNBDState *s = bs->opaque;
     int sock;
 
     if (s->client.is_unix) {
-        sock = unix_socket_outgoing(qemu_opt_get(s->socket_opts, "path"));
+        sock = unix_connect_opts(s->socket_opts, errp, NULL, NULL);
     } else {
-        sock = tcp_socket_outgoing_opts(s->socket_opts);
+        sock = inet_connect_opts(s->socket_opts, errp, NULL, NULL);
         if (sock >= 0) {
             socket_set_nodelay(sock);
         }
@@ -256,17 +251,19 @@ static int nbd_open(BlockDriverState *bs, QDict *options, int flags,
     BDRVNBDState *s = bs->opaque;
     char *export = NULL;
     int result, sock;
+    Error *local_err = NULL;
 
     /* Pop the config into our state object. Exit if invalid. */
-    result = nbd_config(s, options, &export);
-    if (result != 0) {
-        return result;
+    nbd_config(s, options, &export, &local_err);
+    if (local_err) {
+        error_propagate(errp, local_err);
+        return -EINVAL;
     }
 
     /* establish TCP connection, return error if it fails
      * TODO: Configurable retry-until-timeout behaviour.
      */
-    sock = nbd_establish_connection(bs);
+    sock = nbd_establish_connection(bs, errp);
     if (sock < 0) {
         return sock;
     }
@@ -326,46 +323,67 @@ static int64_t nbd_getlength(BlockDriverState *bs)
     return s->client.size;
 }
 
+static void nbd_detach_aio_context(BlockDriverState *bs)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    nbd_client_session_detach_aio_context(&s->client);
+}
+
+static void nbd_attach_aio_context(BlockDriverState *bs,
+                                   AioContext *new_context)
+{
+    BDRVNBDState *s = bs->opaque;
+
+    nbd_client_session_attach_aio_context(&s->client, new_context);
+}
+
 static BlockDriver bdrv_nbd = {
-    .format_name         = "nbd",
-    .protocol_name       = "nbd",
-    .instance_size       = sizeof(BDRVNBDState),
-    .bdrv_parse_filename = nbd_parse_filename,
-    .bdrv_file_open      = nbd_open,
-    .bdrv_co_readv       = nbd_co_readv,
-    .bdrv_co_writev      = nbd_co_writev,
-    .bdrv_close          = nbd_close,
-    .bdrv_co_flush_to_os = nbd_co_flush,
-    .bdrv_co_discard     = nbd_co_discard,
-    .bdrv_getlength      = nbd_getlength,
+    .format_name                = "nbd",
+    .protocol_name              = "nbd",
+    .instance_size              = sizeof(BDRVNBDState),
+    .bdrv_parse_filename        = nbd_parse_filename,
+    .bdrv_file_open             = nbd_open,
+    .bdrv_co_readv              = nbd_co_readv,
+    .bdrv_co_writev             = nbd_co_writev,
+    .bdrv_close                 = nbd_close,
+    .bdrv_co_flush_to_os        = nbd_co_flush,
+    .bdrv_co_discard            = nbd_co_discard,
+    .bdrv_getlength             = nbd_getlength,
+    .bdrv_detach_aio_context    = nbd_detach_aio_context,
+    .bdrv_attach_aio_context    = nbd_attach_aio_context,
 };
 
 static BlockDriver bdrv_nbd_tcp = {
-    .format_name         = "nbd",
-    .protocol_name       = "nbd+tcp",
-    .instance_size       = sizeof(BDRVNBDState),
-    .bdrv_parse_filename = nbd_parse_filename,
-    .bdrv_file_open      = nbd_open,
-    .bdrv_co_readv       = nbd_co_readv,
-    .bdrv_co_writev      = nbd_co_writev,
-    .bdrv_close          = nbd_close,
-    .bdrv_co_flush_to_os = nbd_co_flush,
-    .bdrv_co_discard     = nbd_co_discard,
-    .bdrv_getlength      = nbd_getlength,
+    .format_name                = "nbd",
+    .protocol_name              = "nbd+tcp",
+    .instance_size              = sizeof(BDRVNBDState),
+    .bdrv_parse_filename        = nbd_parse_filename,
+    .bdrv_file_open             = nbd_open,
+    .bdrv_co_readv              = nbd_co_readv,
+    .bdrv_co_writev             = nbd_co_writev,
+    .bdrv_close                 = nbd_close,
+    .bdrv_co_flush_to_os        = nbd_co_flush,
+    .bdrv_co_discard            = nbd_co_discard,
+    .bdrv_getlength             = nbd_getlength,
+    .bdrv_detach_aio_context    = nbd_detach_aio_context,
+    .bdrv_attach_aio_context    = nbd_attach_aio_context,
 };
 
 static BlockDriver bdrv_nbd_unix = {
-    .format_name         = "nbd",
-    .protocol_name       = "nbd+unix",
-    .instance_size       = sizeof(BDRVNBDState),
-    .bdrv_parse_filename = nbd_parse_filename,
-    .bdrv_file_open      = nbd_open,
-    .bdrv_co_readv       = nbd_co_readv,
-    .bdrv_co_writev      = nbd_co_writev,
-    .bdrv_close          = nbd_close,
-    .bdrv_co_flush_to_os = nbd_co_flush,
-    .bdrv_co_discard     = nbd_co_discard,
-    .bdrv_getlength      = nbd_getlength,
+    .format_name                = "nbd",
+    .protocol_name              = "nbd+unix",
+    .instance_size              = sizeof(BDRVNBDState),
+    .bdrv_parse_filename        = nbd_parse_filename,
+    .bdrv_file_open             = nbd_open,
+    .bdrv_co_readv              = nbd_co_readv,
+    .bdrv_co_writev             = nbd_co_writev,
+    .bdrv_close                 = nbd_close,
+    .bdrv_co_flush_to_os        = nbd_co_flush,
+    .bdrv_co_discard            = nbd_co_discard,
+    .bdrv_getlength             = nbd_getlength,
+    .bdrv_detach_aio_context    = nbd_detach_aio_context,
+    .bdrv_attach_aio_context    = nbd_attach_aio_context,
 };
 
 static void bdrv_nbd_init(void)

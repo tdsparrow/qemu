@@ -75,6 +75,8 @@ struct SCSIDiskState
     bool media_event;
     bool eject_request;
     uint64_t wwn;
+    uint64_t port_wwn;
+    uint16_t port_index;
     uint64_t max_unmap_size;
     QEMUBH *bh;
     char *version;
@@ -417,7 +419,7 @@ static int scsi_handle_rw_error(SCSIDiskReq *r, int error)
     SCSIDiskState *s = DO_UPCAST(SCSIDiskState, qdev, r->req.dev);
     BlockErrorAction action = bdrv_get_error_action(s->qdev.conf.bs, is_read, error);
 
-    if (action == BDRV_ACTION_REPORT) {
+    if (action == BLOCK_ERROR_ACTION_REPORT) {
         switch (error) {
         case ENOMEDIUM:
             scsi_check_condition(r, SENSE_CODE(NO_MEDIUM));
@@ -428,16 +430,19 @@ static int scsi_handle_rw_error(SCSIDiskReq *r, int error)
         case EINVAL:
             scsi_check_condition(r, SENSE_CODE(INVALID_FIELD));
             break;
+        case ENOSPC:
+            scsi_check_condition(r, SENSE_CODE(SPACE_ALLOC_FAILED));
+            break;
         default:
             scsi_check_condition(r, SENSE_CODE(IO_ERROR));
             break;
         }
     }
     bdrv_error_action(s->qdev.conf.bs, action, is_read, error);
-    if (action == BDRV_ACTION_STOP) {
+    if (action == BLOCK_ERROR_ACTION_STOP) {
         scsi_req_retry(&r->req);
     }
-    return action != BDRV_ACTION_IGNORE;
+    return action != BLOCK_ERROR_ACTION_IGNORE;
 }
 
 static void scsi_write_complete(void * opaque, int ret)
@@ -616,6 +621,24 @@ static int scsi_disk_emulate_inquiry(SCSIRequest *req, uint8_t *outbuf)
                 outbuf[buflen++] = 8;
                 stq_be_p(&outbuf[buflen], s->wwn);
                 buflen += 8;
+            }
+
+            if (s->port_wwn) {
+                outbuf[buflen++] = 0x61; // SAS / Binary
+                outbuf[buflen++] = 0x93; // PIV / Target port / NAA
+                outbuf[buflen++] = 0;    // reserved
+                outbuf[buflen++] = 8;
+                stq_be_p(&outbuf[buflen], s->port_wwn);
+                buflen += 8;
+            }
+
+            if (s->port_index) {
+                outbuf[buflen++] = 0x61; // SAS / Binary
+                outbuf[buflen++] = 0x94; // PIV / Target port / relative target port
+                outbuf[buflen++] = 0;    // reserved
+                outbuf[buflen++] = 4;
+                stw_be_p(&outbuf[buflen + 2], s->port_index);
+                buflen += 4;
             }
             break;
         }
@@ -1992,7 +2015,7 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
     case VERIFY_10:
     case VERIFY_12:
     case VERIFY_16:
-        DPRINTF("Verify (bytchk %lu)\n", (r->req.buf[1] >> 1) & 3);
+        DPRINTF("Verify (bytchk %d)\n", (req->cmd.buf[1] >> 1) & 3);
         if (req->cmd.buf[1] & 6) {
             goto illegal_request;
         }
@@ -2004,7 +2027,8 @@ static int32_t scsi_disk_emulate_command(SCSIRequest *req, uint8_t *buf)
                 (long)r->req.cmd.xfer);
         break;
     default:
-        DPRINTF("Unknown SCSI command (%2.2x)\n", buf[0]);
+        DPRINTF("Unknown SCSI command (%2.2x=%s)\n", buf[0],
+                scsi_command_name(buf[0]));
         scsi_check_condition(r, SENSE_CODE(INVALID_OPCODE));
         return 0;
     }
@@ -2435,21 +2459,27 @@ static int scsi_block_initfn(SCSIDevice *dev)
     int rc;
 
     if (!s->qdev.conf.bs) {
-        error_report("scsi-block: drive property not set");
+        error_report("drive property not set");
         return -1;
     }
 
     /* check we are using a driver managing SG_IO (version 3 and after) */
-    if (bdrv_ioctl(s->qdev.conf.bs, SG_GET_VERSION_NUM, &sg_version) < 0 ||
-        sg_version < 30000) {
-        error_report("scsi-block: scsi generic interface too old");
+    rc = bdrv_ioctl(s->qdev.conf.bs, SG_GET_VERSION_NUM, &sg_version);
+    if (rc < 0) {
+        error_report("cannot get SG_IO version number: %s.  "
+                     "Is this a SCSI device?",
+                     strerror(-rc));
+        return -1;
+    }
+    if (sg_version < 30000) {
+        error_report("scsi generic interface too old");
         return -1;
     }
 
     /* get device type from INQUIRY data */
     rc = get_device_type(s);
     if (rc < 0) {
-        error_report("scsi-block: INQUIRY failed");
+        error_report("INQUIRY failed");
         return -1;
     }
 
@@ -2497,7 +2527,7 @@ static SCSIRequest *scsi_block_new_request(SCSIDevice *d, uint32_t tag,
 	 * ones (such as WRITE SAME or EXTENDED COPY, etc.).  So, without
 	 * O_DIRECT everything must go through SG_IO.
          */
-        if (bdrv_get_flags(s->qdev.conf.bs) & BDRV_O_NOCACHE) {
+        if (!(bdrv_get_flags(s->qdev.conf.bs) & BDRV_O_NOCACHE)) {
             break;
         }
 
@@ -2535,7 +2565,9 @@ static Property scsi_hd_properties[] = {
                     SCSI_DISK_F_REMOVABLE, false),
     DEFINE_PROP_BIT("dpofua", SCSIDiskState, features,
                     SCSI_DISK_F_DPOFUA, false),
-    DEFINE_PROP_HEX64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("port_wwn", SCSIDiskState, port_wwn, 0),
+    DEFINE_PROP_UINT16("port_index", SCSIDiskState, port_index, 0),
     DEFINE_PROP_UINT64("max_unmap_size", SCSIDiskState, max_unmap_size,
                        DEFAULT_MAX_UNMAP_SIZE),
     DEFINE_BLOCK_CHS_PROPERTIES(SCSIDiskState, qdev.conf),
@@ -2546,7 +2578,6 @@ static const VMStateDescription vmstate_scsi_disk_state = {
     .name = "scsi-disk",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_SCSI_DEVICE(qdev, SCSIDiskState),
         VMSTATE_BOOL(media_changed, SCSIDiskState),
@@ -2583,7 +2614,9 @@ static const TypeInfo scsi_hd_info = {
 
 static Property scsi_cd_properties[] = {
     DEFINE_SCSI_DISK_PROPERTIES(),
-    DEFINE_PROP_HEX64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("port_wwn", SCSIDiskState, port_wwn, 0),
+    DEFINE_PROP_UINT16("port_index", SCSIDiskState, port_index, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -2646,7 +2679,9 @@ static Property scsi_disk_properties[] = {
                     SCSI_DISK_F_REMOVABLE, false),
     DEFINE_PROP_BIT("dpofua", SCSIDiskState, features,
                     SCSI_DISK_F_DPOFUA, false),
-    DEFINE_PROP_HEX64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("wwn", SCSIDiskState, wwn, 0),
+    DEFINE_PROP_UINT64("port_wwn", SCSIDiskState, port_wwn, 0),
+    DEFINE_PROP_UINT16("port_index", SCSIDiskState, port_index, 0),
     DEFINE_PROP_UINT64("max_unmap_size", SCSIDiskState, max_unmap_size,
                        DEFAULT_MAX_UNMAP_SIZE),
     DEFINE_PROP_END_OF_LIST(),

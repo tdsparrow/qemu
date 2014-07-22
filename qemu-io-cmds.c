@@ -16,7 +16,7 @@
 
 #define CMD_NOFILE_OK   0x01
 
-int qemuio_misalign;
+bool qemuio_misalign;
 
 static cmdinfo_t *cmdtab;
 static int ncmds;
@@ -483,7 +483,7 @@ static int do_co_write_zeroes(BlockDriverState *bs, int64_t offset, int count,
     co = qemu_coroutine_create(co_write_zeroes_entry);
     qemu_coroutine_enter(co, &data);
     while (!data.done) {
-        qemu_aio_wait();
+        aio_poll(bdrv_get_aio_context(bs), true);
     }
     if (data.ret < 0) {
         return data.ret;
@@ -1087,7 +1087,7 @@ writev_help(void)
 " writes a range of bytes from the given offset source from multiple buffers\n"
 "\n"
 " Example:\n"
-" 'write 512 1k 1k' - writes 2 kilobytes at 512 bytes into the open file\n"
+" 'writev 512 1k 1k' - writes 2 kilobytes at 512 bytes into the open file\n"
 "\n"
 " Writes into a segment of the currently open file, using a buffer\n"
 " filled with a set pattern (0xcdcdcdcd).\n"
@@ -2027,7 +2027,7 @@ static const cmdinfo_t resume_cmd = {
 static int wait_break_f(BlockDriverState *bs, int argc, char **argv)
 {
     while (!bdrv_debug_is_suspended(bs, argv[1])) {
-        qemu_aio_wait();
+        aio_poll(bdrv_get_aio_context(bs), true);
     }
 
     return 0;

@@ -203,7 +203,7 @@ static const VMStateDescription vmstate_i440fx = {
     .minimum_version_id_old = 1,
     .load_state_old = i440fx_load_old,
     .post_load = i440fx_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, PCII440FXState),
         VMSTATE_UINT8(smm_enabled, PCII440FXState),
         VMSTATE_END_OF_LIST()
@@ -553,7 +553,7 @@ static const VMStateDescription vmstate_piix3_rcr = {
     .name = "PIIX3/rcr",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(rcr, PIIX3State),
         VMSTATE_END_OF_LIST()
     }
@@ -563,10 +563,9 @@ static const VMStateDescription vmstate_piix3 = {
     .name = "PIIX3",
     .version_id = 3,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
     .post_load = piix3_post_load,
     .pre_save = piix3_pre_save,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(dev, PIIX3State),
         VMSTATE_INT32_ARRAY_V(pci_irq_levels_vmstate, PIIX3State,
                               PIIX_NUM_PIRQS, 3),
@@ -628,7 +627,7 @@ static void piix3_class_init(ObjectClass *klass, void *data)
 
     dc->desc        = "ISA bridge";
     dc->vmsd        = &vmstate_piix3;
-    k->no_hotplug   = 1;
+    dc->hotpluggable   = false;
     k->init         = piix3_initfn;
     k->config_write = piix3_write_config;
     k->vendor_id    = PCI_VENDOR_ID_INTEL;
@@ -656,7 +655,7 @@ static void piix3_xen_class_init(ObjectClass *klass, void *data)
 
     dc->desc        = "ISA bridge";
     dc->vmsd        = &vmstate_piix3;
-    k->no_hotplug   = 1;
+    dc->hotpluggable   = false;
     k->init         = piix3_initfn;
     k->config_write = piix3_write_config_xen;
     k->vendor_id    = PCI_VENDOR_ID_INTEL;
@@ -682,7 +681,6 @@ static void i440fx_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
-    k->no_hotplug = 1;
     k->init = i440fx_initfn;
     k->config_write = i440fx_write_config;
     k->vendor_id = PCI_VENDOR_ID_INTEL;
@@ -696,6 +694,7 @@ static void i440fx_class_init(ObjectClass *klass, void *data)
      * host-facing part, which can't be device_add'ed, yet.
      */
     dc->cannot_instantiate_with_device_add_yet = true;
+    dc->hotpluggable   = false;
 }
 
 static const TypeInfo i440fx_info = {

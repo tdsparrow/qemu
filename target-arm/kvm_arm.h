@@ -15,19 +15,36 @@
 #include "exec/memory.h"
 
 /**
+ * kvm_arm_vcpu_init:
+ * @cs: CPUState
+ *
+ * Initialize (or reinitialize) the VCPU by invoking the
+ * KVM_ARM_VCPU_INIT ioctl with the CPU type and feature
+ * bitmask specified in the CPUState.
+ *
+ * Returns: 0 if success else < 0 error code
+ */
+int kvm_arm_vcpu_init(CPUState *cs);
+
+/**
  * kvm_arm_register_device:
  * @mr: memory region for this device
  * @devid: the KVM device ID
+ * @group: device control API group for setting addresses
+ * @attr: device control API address type
+ * @dev_fd: device control device file descriptor (or -1 if not supported)
  *
  * Remember the memory region @mr, and when it is mapped by the
  * machine model, tell the kernel that base address using the
- * KVM_SET_DEVICE_ADDRESS ioctl. @devid should be the ID of
- * the device as defined by KVM_SET_DEVICE_ADDRESS.
- * The machine model may map and unmap the device multiple times;
- * the kernel will only be told the final address at the point
- * where machine init is complete.
+ * KVM_ARM_SET_DEVICE_ADDRESS ioctl or the newer device control API.  @devid
+ * should be the ID of the device as defined by KVM_ARM_SET_DEVICE_ADDRESS or
+ * the arm-vgic device in the device control API.
+ * The machine model may map
+ * and unmap the device multiple times; the kernel will only be told the final
+ * address at the point where machine init is complete.
  */
-void kvm_arm_register_device(MemoryRegion *mr, uint64_t devid);
+void kvm_arm_register_device(MemoryRegion *mr, uint64_t devid, uint64_t group,
+                             uint64_t attr, int dev_fd);
 
 /**
  * write_list_to_kvmstate:
@@ -61,6 +78,14 @@ bool write_list_to_kvmstate(ARMCPU *cpu);
  * reading all registers in the list.
  */
 bool write_kvmstate_to_list(ARMCPU *cpu);
+
+/**
+ * kvm_arm_reset_vcpu:
+ * @cpu: ARMCPU
+ *
+ * Called at reset time to kernel registers to their initial values.
+ */
+void kvm_arm_reset_vcpu(ARMCPU *cpu);
 
 #ifdef CONFIG_KVM
 /**

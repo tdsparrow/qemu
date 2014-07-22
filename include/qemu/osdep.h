@@ -116,6 +116,16 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #else
 #define QEMU_MADV_MERGEABLE QEMU_MADV_INVALID
 #endif
+#ifdef MADV_UNMERGEABLE
+#define QEMU_MADV_UNMERGEABLE MADV_UNMERGEABLE
+#else
+#define QEMU_MADV_UNMERGEABLE QEMU_MADV_INVALID
+#endif
+#ifdef MADV_DODUMP
+#define QEMU_MADV_DODUMP MADV_DODUMP
+#else
+#define QEMU_MADV_DODUMP QEMU_MADV_INVALID
+#endif
 #ifdef MADV_DONTDUMP
 #define QEMU_MADV_DONTDUMP MADV_DONTDUMP
 #else
@@ -133,6 +143,8 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #define QEMU_MADV_DONTNEED  POSIX_MADV_DONTNEED
 #define QEMU_MADV_DONTFORK  QEMU_MADV_INVALID
 #define QEMU_MADV_MERGEABLE QEMU_MADV_INVALID
+#define QEMU_MADV_UNMERGEABLE QEMU_MADV_INVALID
+#define QEMU_MADV_DODUMP QEMU_MADV_INVALID
 #define QEMU_MADV_DONTDUMP QEMU_MADV_INVALID
 #define QEMU_MADV_HUGEPAGE  QEMU_MADV_INVALID
 
@@ -142,6 +154,8 @@ void qemu_anon_ram_free(void *ptr, size_t size);
 #define QEMU_MADV_DONTNEED  QEMU_MADV_INVALID
 #define QEMU_MADV_DONTFORK  QEMU_MADV_INVALID
 #define QEMU_MADV_MERGEABLE QEMU_MADV_INVALID
+#define QEMU_MADV_UNMERGEABLE QEMU_MADV_INVALID
+#define QEMU_MADV_DODUMP QEMU_MADV_INVALID
 #define QEMU_MADV_DONTDUMP QEMU_MADV_INVALID
 #define QEMU_MADV_HUGEPAGE  QEMU_MADV_INVALID
 
@@ -215,6 +229,15 @@ bool fips_get_state(void);
  */
 char *qemu_get_local_state_pathname(const char *relative_pathname);
 
+/* Find program directory, and save it for later usage with
+ * qemu_get_exec_dir().
+ * Try OS specific API first, if not working, parse from argv0. */
+void qemu_init_exec_dir(const char *argv0);
+
+/* Get the saved exec dir.
+ * Caller needs to release the returned string by g_free() */
+char *qemu_get_exec_dir(void);
+
 /**
  * qemu_getauxval:
  * @type: the auxiliary vector key to lookup
@@ -228,18 +251,8 @@ unsigned long qemu_getauxval(unsigned long type);
 static inline unsigned long qemu_getauxval(unsigned long type) { return 0; }
 #endif
 
-/**
- * qemu_init_auxval:
- * @envp: the third argument to main
- *
- * If supported and required, locate the auxiliary vector at program startup.
- */
-#if defined(CONFIG_GETAUXVAL) || !defined(__linux__)
-static inline void qemu_init_auxval(char **envp) { }
-#else
-void qemu_init_auxval(char **envp);
-#endif
-
 void qemu_set_tty_echo(int fd, bool echo);
+
+void os_mem_prealloc(int fd, char *area, size_t sz);
 
 #endif

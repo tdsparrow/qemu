@@ -24,6 +24,12 @@
 #include "qemu/notify.h"
 #include "qemu/option.h"
 #include "exec/memory.h"
+#include "hw/irq.h"
+
+/*
+ * current device naming scheme supports up to 256 memory devices
+ */
+#define ACPI_MAX_RAM_SLOTS 256
 
 /* from linux include/acpi/actype.h */
 /* Default ACPI register widths */

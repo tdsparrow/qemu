@@ -8,6 +8,7 @@
 #include "qom/object.h"
 #include "hw/irq.h"
 #include "qapi/error.h"
+#include "hw/hotplug.h"
 
 enum {
     DEV_NVECTORS_UNSPECIFIED = -1,
@@ -35,6 +36,8 @@ typedef int (*qdev_event)(DeviceState *dev);
 typedef void (*qdev_resetfn)(DeviceState *dev);
 typedef void (*DeviceRealize)(DeviceState *dev, Error **errp);
 typedef void (*DeviceUnrealize)(DeviceState *dev, Error **errp);
+typedef void (*BusRealize)(BusState *bus, Error **errp);
+typedef void (*BusUnrealize)(BusState *bus, Error **errp);
 
 struct VMStateDescription;
 
@@ -49,6 +52,8 @@ struct VMStateDescription;
  * is changed to %true. Deprecated, new types inheriting directly from
  * TYPE_DEVICE should use @realize instead, new leaf types should consult
  * their respective parent type.
+ * @hotpluggable: indicates if #DeviceClass is hotpluggable, available
+ * as readonly "hotpluggable" property of #DeviceState instance
  *
  * # Realization #
  * Devices are constructed in two stages,
@@ -109,6 +114,7 @@ typedef struct DeviceClass {
      * TODO remove once we're there
      */
     bool cannot_instantiate_with_device_add_yet;
+    bool hotpluggable;
 
     /* callbacks */
     void (*reset)(DeviceState *dev);
@@ -125,6 +131,17 @@ typedef struct DeviceClass {
     const char *bus_type;
 } DeviceClass;
 
+typedef struct NamedGPIOList NamedGPIOList;
+
+struct NamedGPIOList {
+    char *name;
+    qemu_irq *in;
+    int num_in;
+    qemu_irq *out;
+    int num_out;
+    QLIST_ENTRY(NamedGPIOList) node;
+};
+
 /**
  * DeviceState:
  * @realized: Indicates whether the device has been fully constructed.
@@ -139,13 +156,11 @@ struct DeviceState {
 
     const char *id;
     bool realized;
+    bool pending_deleted_event;
     QemuOpts *opts;
     int hotplugged;
     BusState *parent_bus;
-    int num_gpio_out;
-    qemu_irq *gpio_out;
-    int num_gpio_in;
-    qemu_irq *gpio_in;
+    QLIST_HEAD(, NamedGPIOList) gpios;
     QLIST_HEAD(, BusState) child_bus;
     int num_child_bus;
     int instance_id_alias;
@@ -170,8 +185,13 @@ struct BusClass {
      */
     char *(*get_fw_dev_path)(DeviceState *dev);
     void (*reset)(BusState *bus);
+    BusRealize realize;
+    BusUnrealize unrealize;
+
     /* maximum devices allowed on the bus, 0: no limit. */
     int max_dev;
+    /* number of automatically allocated bus ids (e.g. ide.0) */
+    int automatic_ids;
 };
 
 typedef struct BusChild {
@@ -180,15 +200,20 @@ typedef struct BusChild {
     QTAILQ_ENTRY(BusChild) sibling;
 } BusChild;
 
+#define QDEV_HOTPLUG_HANDLER_PROPERTY "hotplug-handler"
+
 /**
  * BusState:
+ * @hotplug_device: link to a hotplug device associated with bus.
  */
 struct BusState {
     Object obj;
     DeviceState *parent;
     const char *name;
     int allow_hotplug;
+    HotplugHandler *hotplug_handler;
     int max_index;
+    bool realized;
     QTAILQ_HEAD(ChildrenHead, BusChild) children;
     QLIST_ENTRY(BusState) sibling;
 };
@@ -209,17 +234,24 @@ struct PropertyInfo {
     const char *name;
     const char *legacy_name;
     const char **enum_table;
-    int (*parse)(DeviceState *dev, Property *prop, const char *str);
     int (*print)(DeviceState *dev, Property *prop, char *dest, size_t len);
     ObjectPropertyAccessor *get;
     ObjectPropertyAccessor *set;
     ObjectPropertyRelease *release;
 };
 
+/**
+ * GlobalProperty:
+ * @not_used: Track use of a global property.  Defaults to false in all C99
+ * struct initializations.
+ *
+ * This prevents reports of .compat_props when they are not used.
+ */
 typedef struct GlobalProperty {
     const char *driver;
     const char *property;
     const char *value;
+    bool not_used;
     QTAILQ_ENTRY(GlobalProperty) next;
 } GlobalProperty;
 
@@ -237,7 +269,11 @@ void qdev_machine_creation_done(void);
 bool qdev_machine_modified(void);
 
 qemu_irq qdev_get_gpio_in(DeviceState *dev, int n);
+qemu_irq qdev_get_gpio_in_named(DeviceState *dev, const char *name, int n);
+
 void qdev_connect_gpio_out(DeviceState *dev, int n, qemu_irq pin);
+void qdev_connect_gpio_out_named(DeviceState *dev, const char *name, int n,
+                                 qemu_irq pin);
 
 BusState *qdev_get_child_bus(DeviceState *dev, const char *name);
 
@@ -247,6 +283,10 @@ BusState *qdev_get_child_bus(DeviceState *dev, const char *name);
 /* GPIO inputs also double as IRQ sinks.  */
 void qdev_init_gpio_in(DeviceState *dev, qemu_irq_handler handler, int n);
 void qdev_init_gpio_out(DeviceState *dev, qemu_irq *pins, int n);
+void qdev_init_gpio_in_named(DeviceState *dev, qemu_irq_handler handler,
+                             const char *name, int n);
+void qdev_init_gpio_out_named(DeviceState *dev, qemu_irq *pins,
+                              const char *name, int n);
 
 BusState *qdev_get_parent_bus(DeviceState *dev);
 
@@ -321,4 +361,11 @@ extern int qdev_hotplug;
 
 char *qdev_get_dev_path(DeviceState *dev);
 
+static inline void qbus_set_hotplug_handler(BusState *bus, DeviceState *handler,
+                                            Error **errp)
+{
+    object_property_set_link(OBJECT(bus), OBJECT(handler),
+                             QDEV_HOTPLUG_HANDLER_PROPERTY, errp);
+    bus->allow_hotplug = 1;
+}
 #endif

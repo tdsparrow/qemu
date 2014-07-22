@@ -148,7 +148,7 @@ static int hex2nib(char ch)
     } else if (ch >= 'a' && ch <= 'f') {
         return 10 + (ch - 'a');
     } else if (ch >= 'A' && ch <= 'F') {
-        return 10 + (ch - 'a');
+        return 10 + (ch - 'A');
     } else {
         return -1;
     }
@@ -233,7 +233,8 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
     g_assert(command);
     if (strcmp(words[0], "irq_intercept_out") == 0
         || strcmp(words[0], "irq_intercept_in") == 0) {
-	DeviceState *dev;
+        DeviceState *dev;
+        NamedGPIOList *ngl;
 
         g_assert(words[1]);
         dev = DEVICE(object_resolve_path(words[1], NULL));
@@ -253,10 +254,18 @@ static void qtest_process_command(CharDriverState *chr, gchar **words)
 	    return;
         }
 
-        if (words[0][14] == 'o') {
-            qemu_irq_intercept_out(&dev->gpio_out, qtest_irq_handler, dev->num_gpio_out);
-        } else {
-            qemu_irq_intercept_in(dev->gpio_in, qtest_irq_handler, dev->num_gpio_in);
+        QLIST_FOREACH(ngl, &dev->gpios, node) {
+            /* We don't support intercept of named GPIOs yet */
+            if (ngl->name) {
+                continue;
+            }
+            if (words[0][14] == 'o') {
+                qemu_irq_intercept_out(&ngl->out, qtest_irq_handler,
+                                       ngl->num_out);
+            } else {
+                qemu_irq_intercept_in(ngl->in, qtest_irq_handler,
+                                      ngl->num_in);
+            }
         }
         irq_intercept_dev = dev;
         qtest_send_prefix(chr);
@@ -500,18 +509,24 @@ static void qtest_event(void *opaque, int event)
     }
 }
 
-int qtest_init_accel(void)
+int qtest_init_accel(MachineClass *mc)
 {
     configure_icount("0");
 
     return 0;
 }
 
-void qtest_init(const char *qtest_chrdev, const char *qtest_log)
+void qtest_init(const char *qtest_chrdev, const char *qtest_log, Error **errp)
 {
     CharDriverState *chr;
 
     chr = qemu_chr_new("qtest", qtest_chrdev, NULL);
+
+    if (chr == NULL) {
+        error_setg(errp, "Failed to initialize device for qtest: \"%s\"",
+                   qtest_chrdev);
+        return;
+    }
 
     qemu_chr_add_handlers(chr, qtest_can_read, qtest_read, qtest_event, chr);
     qemu_chr_fe_set_echo(chr, true);
@@ -527,4 +542,9 @@ void qtest_init(const char *qtest_chrdev, const char *qtest_log)
     }
 
     qtest_chr = chr;
+}
+
+bool qtest_driver(void)
+{
+    return qtest_chr;
 }

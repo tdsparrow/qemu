@@ -109,6 +109,7 @@ void cache_fini(PageCache *cache)
 
     g_free(cache->page_cache);
     cache->page_cache = NULL;
+    g_free(cache);
 }
 
 static size_t cache_get_cache_pos(const PageCache *cache,
@@ -150,7 +151,7 @@ uint8_t *get_cached_data(const PageCache *cache, uint64_t addr)
     return cache_get_by_addr(cache, addr)->it_data;
 }
 
-int cache_insert(PageCache *cache, uint64_t addr, uint8_t *pdata)
+int cache_insert(PageCache *cache, uint64_t addr, const uint8_t *pdata)
 {
 
     CacheItem *it = NULL;

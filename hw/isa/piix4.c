@@ -76,8 +76,7 @@ static const VMStateDescription vmstate_piix4 = {
     .name = "PIIX4",
     .version_id = 2,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(dev, PIIX4State),
         VMSTATE_END_OF_LIST()
     }
@@ -107,7 +106,6 @@ static void piix4_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
-    k->no_hotplug = 1;
     k->init = piix4_initfn;
     k->vendor_id = PCI_VENDOR_ID_INTEL;
     k->device_id = PCI_DEVICE_ID_INTEL_82371AB_0;
@@ -119,6 +117,7 @@ static void piix4_class_init(ObjectClass *klass, void *data)
      * e.g. by mips_malta_init()
      */
     dc->cannot_instantiate_with_device_add_yet = true;
+    dc->hotpluggable = false;
 }
 
 static const TypeInfo piix4_info = {
